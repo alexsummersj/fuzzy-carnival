@@ -55,7 +55,7 @@ export interface PropertyData {
   parkingSpaces?: number;
 
   // Metadata
-  sourceType: 'pdf' | 'text' | 'form';
+  sourceType: 'pdf' | 'text' | 'form' | 'mixed';
   confidence?: number; // 0-100, how confident we are in parsed data
   rawText?: string;
 }

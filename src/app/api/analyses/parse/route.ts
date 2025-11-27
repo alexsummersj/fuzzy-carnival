@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
         ...pdfMerged,
         ...textData.propertyData,
         confidence: Math.round((pdfMerged.confidence + textData.confidence) / 2),
-        extractedFields: [...new Set([...pdfMerged.extractedFields, ...textData.extractedFields])],
+        extractedFields: Array.from(new Set([...pdfMerged.extractedFields, ...textData.extractedFields])),
       };
     } else if (pdfMerged) {
       finalData = pdfMerged;

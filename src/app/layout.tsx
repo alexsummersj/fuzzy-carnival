@@ -6,6 +6,9 @@ import { Toaster } from '@/components/ui/toaster';
 import { AuthProvider } from '@/components/providers/auth-provider';
 import './globals.css';
 
+// Force dynamic rendering for all pages using next-intl
+export const dynamic = 'force-dynamic';
+
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
 export const metadata: Metadata = {

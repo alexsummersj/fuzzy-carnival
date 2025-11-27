@@ -676,7 +676,7 @@ export function mergePropertyData(
 
     // Merge amenities
     if (data.amenities) {
-      merged.amenities = [...new Set([...(merged.amenities || []), ...data.amenities])];
+      merged.amenities = Array.from(new Set([...(merged.amenities || []), ...data.amenities]));
     }
   }
 
