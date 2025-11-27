@@ -8,7 +8,7 @@ import prisma from '@/lib/prisma';
  * DELETE THIS FILE AFTER USE
  */
 // CHANGE THIS TO YOUR EMAIL
-const ADMIN_EMAIL = 'your-email@example.com';
+const ADMIN_EMAIL = 'pantyulin2012@gmail.com';
 
 export async function POST(request: NextRequest) {
   try {
