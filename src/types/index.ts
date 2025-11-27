@@ -299,7 +299,8 @@ export interface LLMProvider {
 
   evaluateDeveloper?(
     developerName: string,
-    country?: string
+    country?: string,
+    language?: string
   ): Promise<DeveloperEvaluation>;
 }
 
