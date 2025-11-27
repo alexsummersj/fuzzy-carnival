@@ -6,7 +6,6 @@ import { useTranslations } from 'next-intl';
 import { useDropzone } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -15,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
 import { toast } from '@/components/ui/toaster';
 import {
   Upload,
@@ -25,26 +23,11 @@ import {
   Check,
   X,
   Loader2,
+  Sparkles,
 } from 'lucide-react';
-import { locales, localeNames, type Locale } from '@/i18n/config';
+import { locales, localeNames } from '@/i18n/config';
 
 type Step = 'input' | 'review' | 'results';
-
-interface PropertyFormData {
-  name?: string;
-  developer?: string;
-  city?: string;
-  area?: string;
-  country?: string;
-  propertyType?: string;
-  bedrooms?: number;
-  bathrooms?: number;
-  areaSqFt?: number;
-  price?: number;
-  currency?: string;
-  status?: string;
-  handoverDate?: string;
-}
 
 export default function NewAnalysisPage() {
   const t = useTranslations();
@@ -56,9 +39,9 @@ export default function NewAnalysisPage() {
   const [language, setLanguage] = useState('en');
   const [loading, setLoading] = useState(false);
   const [parseLoading, setParsing] = useState(false);
-  const [propertyData, setPropertyData] = useState<PropertyFormData>({});
-  const [confidence, setConfidence] = useState(0);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [summary, setSummary] = useState('');
+  const [additionalInfo, setAdditionalInfo] = useState('');
+  const [rawText, setRawText] = useState('');
   const [analysisResult, setAnalysisResult] = useState<any>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -82,9 +65,9 @@ export default function NewAnalysisPage() {
     setParsing(true);
     try {
       const formData = new FormData();
-      formData.append('inputType', inputType);
+      formData.append('language', language);
 
-      if (inputType === 'pdf' && files.length > 0) {
+      if (files.length > 0) {
         files.forEach((file) => formData.append('files', file));
       }
 
@@ -100,14 +83,13 @@ export default function NewAnalysisPage() {
       const data = await res.json();
 
       if (data.success) {
-        setPropertyData(data.data.propertyData);
-        setConfidence(data.data.confidence);
-        setWarnings(data.data.warnings || []);
+        setSummary(data.data.summary);
+        setRawText(data.data.rawText);
         setStep('review');
       } else {
         toast({
-          title: 'Parse Failed',
-          description: data.error?.message || 'Failed to extract property data',
+          title: 'Error',
+          description: data.error?.message || 'Failed to analyze document',
           variant: 'destructive',
         });
       }
@@ -128,14 +110,13 @@ export default function NewAnalysisPage() {
       const formData = new FormData();
       formData.append('inputType', inputType);
       formData.append('language', language);
-      formData.append('propertyData', JSON.stringify(propertyData));
 
-      if (inputType === 'pdf' && files.length > 0) {
+      // Send raw text + additional info for AI to process
+      const fullText = rawText + (additionalInfo ? `\n\n--- Additional Information ---\n${additionalInfo}` : '');
+      formData.append('textInput', fullText);
+
+      if (files.length > 0) {
         files.forEach((file) => formData.append('files', file));
-      }
-
-      if (textInput) {
-        formData.append('textInput', textInput);
       }
 
       const res = await fetch('/api/analyses', {
@@ -333,12 +314,12 @@ export default function NewAnalysisPage() {
                 {parseLoading ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Parsing...
+                    Analyzing...
                   </>
                 ) : (
                   <>
-                    <ArrowRight className="w-4 h-4 mr-2" />
-                    Extract Data
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Analyze with AI
                   </>
                 )}
               </Button>
@@ -347,185 +328,40 @@ export default function NewAnalysisPage() {
         </Card>
       )}
 
-      {/* Step 2: Review */}
+      {/* Step 2: Review - Simplified */}
       {step === 'review' && (
         <Card>
           <CardHeader>
-            <CardTitle>{t('analysis.extractedData')}</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              AI Summary
+            </CardTitle>
             <CardDescription>
-              Review and edit the extracted property information
+              Review what AI found in your documents
             </CardDescription>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-sm text-gray-600">
-                {t('analysis.confidence')}:
-              </span>
-              <Progress
-                value={confidence}
-                className="w-32 h-2"
-                indicatorClassName={
-                  confidence >= 70
-                    ? 'bg-green-500'
-                    : confidence >= 40
-                    ? 'bg-yellow-500'
-                    : 'bg-red-500'
-                }
-              />
-              <span className="text-sm font-medium">{confidence}%</span>
-            </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            {warnings.length > 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <p className="font-medium text-yellow-800 mb-2">
-                  {t('analysis.warnings')}:
-                </p>
-                <ul className="list-disc list-inside text-sm text-yellow-700">
-                  {warnings.map((w, i) => (
-                    <li key={i}>{w}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* AI Summary */}
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-100 rounded-lg p-6">
+              <p className="text-gray-800 text-lg leading-relaxed">
+                {summary}
+              </p>
+            </div>
 
-            <div className="grid md:grid-cols-2 gap-4">
-              <div>
-                <Label>{t('property.name')}</Label>
-                <Input
-                  value={propertyData.name || ''}
-                  onChange={(e) =>
-                    setPropertyData({ ...propertyData, name: e.target.value })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.developer')}</Label>
-                <Input
-                  value={propertyData.developer || ''}
-                  onChange={(e) =>
-                    setPropertyData({ ...propertyData, developer: e.target.value })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.city')}</Label>
-                <Input
-                  value={propertyData.city || ''}
-                  onChange={(e) =>
-                    setPropertyData({ ...propertyData, city: e.target.value })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.area')}</Label>
-                <Input
-                  value={propertyData.area || ''}
-                  onChange={(e) =>
-                    setPropertyData({ ...propertyData, area: e.target.value })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.type')}</Label>
-                <Select
-                  value={propertyData.propertyType || ''}
-                  onValueChange={(v) =>
-                    setPropertyData({ ...propertyData, propertyType: v })
-                  }
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {['apartment', 'villa', 'townhouse', 'penthouse', 'studio', 'land', 'commercial'].map(
-                      (type) => (
-                        <SelectItem key={type} value={type}>
-                          {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </SelectItem>
-                      )
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>{t('property.bedrooms')}</Label>
-                <Input
-                  type="number"
-                  value={propertyData.bedrooms || ''}
-                  onChange={(e) =>
-                    setPropertyData({
-                      ...propertyData,
-                      bedrooms: parseInt(e.target.value) || undefined,
-                    })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.sizeSqft')}</Label>
-                <Input
-                  type="number"
-                  value={propertyData.areaSqFt || ''}
-                  onChange={(e) =>
-                    setPropertyData({
-                      ...propertyData,
-                      areaSqFt: parseInt(e.target.value) || undefined,
-                    })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.price')}</Label>
-                <Input
-                  type="number"
-                  value={propertyData.price || ''}
-                  onChange={(e) =>
-                    setPropertyData({
-                      ...propertyData,
-                      price: parseInt(e.target.value) || undefined,
-                    })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label>{t('property.status')}</Label>
-                <Select
-                  value={propertyData.status || ''}
-                  onValueChange={(v) =>
-                    setPropertyData({ ...propertyData, status: v })
-                  }
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {['ready', 'off_plan', 'under_construction', 'pre_launch', 'resale'].map(
-                      (status) => (
-                        <SelectItem key={status} value={status}>
-                          {status.replace(/_/g, ' ').charAt(0).toUpperCase() +
-                            status.replace(/_/g, ' ').slice(1)}
-                        </SelectItem>
-                      )
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>{t('property.handoverDate')}</Label>
-                <Input
-                  value={propertyData.handoverDate || ''}
-                  onChange={(e) =>
-                    setPropertyData({ ...propertyData, handoverDate: e.target.value })
-                  }
-                  placeholder="e.g., December 2025"
-                  className="mt-1"
-                />
-              </div>
+            {/* Additional Info */}
+            <div>
+              <Label className="text-base font-medium">
+                Additional Information (optional)
+              </Label>
+              <p className="text-sm text-gray-500 mb-2">
+                Add any details AI might have missed - price, developer, location, etc.
+              </p>
+              <textarea
+                className="w-full p-4 border rounded-lg min-h-[120px] resize-y"
+                placeholder="Example: This is a 2BR apartment by Emaar in Dubai Marina, priced at AED 2.5M, handover Q4 2025..."
+                value={additionalInfo}
+                onChange={(e) => setAdditionalInfo(e.target.value)}
+              />
             </div>
 
             {/* Actions */}
@@ -543,7 +379,7 @@ export default function NewAnalysisPage() {
                 ) : (
                   <>
                     <Check className="w-4 h-4 mr-2" />
-                    Analyze Risk
+                    Generate Risk Report
                   </>
                 )}
               </Button>
@@ -592,7 +428,9 @@ export default function NewAnalysisPage() {
                   setStep('input');
                   setFiles([]);
                   setTextInput('');
-                  setPropertyData({});
+                  setSummary('');
+                  setAdditionalInfo('');
+                  setRawText('');
                   setAnalysisResult(null);
                 }}>
                   {t('analysis.startOver')}

@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { parsePropertyTextAsync } from '@/services/text-parser.service';
-import { parsePDF, extractPropertyDataFromPDFAsync, mergePropertyData } from '@/services/pdf-parser.service';
+import { parsePDF } from '@/services/pdf-parser.service';
+import { generateDocumentSummary } from '@/services/llm.service';
 
 /**
  * POST /api/analyses/parse
- * Parse input and return extracted data without creating analysis
- * Used for preview/editing before final submission
+ * Parse input and return AI-generated summary
+ * User can add additional context in free form
  */
 export async function POST(request: NextRequest) {
   try {
@@ -19,8 +19,8 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = await request.formData();
-    const inputType = formData.get('inputType') as string;
     const textInput = formData.get('textInput') as string | null;
+    const language = formData.get('language') as string || 'en';
 
     // Process files if any
     const files: Array<{ buffer: Buffer; originalName: string }> = [];
@@ -36,78 +36,44 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Parse based on input type
-    const extractedDataList = [];
-    const warnings: string[] = [];
+    // Collect all text content
+    let allText = '';
+    const fileNames: string[] = [];
 
-    // Parse PDFs with AI extraction
+    // Extract text from PDFs
     if (files.length > 0) {
       for (const file of files) {
         try {
           const parseResult = await parsePDF(file.buffer);
-          const extracted = await extractPropertyDataFromPDFAsync(parseResult.text, file.originalName);
-          extractedDataList.push(extracted);
+          allText += `\n--- ${file.originalName} ---\n${parseResult.text}\n`;
+          fileNames.push(file.originalName);
         } catch (error) {
-          warnings.push(`Failed to parse ${file.originalName}: ${(error as Error).message}`);
+          console.error(`Failed to parse ${file.originalName}:`, error);
         }
       }
     }
 
-    // Parse text with AI extraction
-    let textData = null;
+    // Add text input
     if (textInput) {
-      const parseResult = await parsePropertyTextAsync(textInput);
-      textData = parseResult;
-      if (parseResult.warnings.length > 0) {
-        warnings.push(...parseResult.warnings);
-      }
+      allText += `\n--- User Input ---\n${textInput}\n`;
     }
 
-    // Merge all PDF data
-    let pdfMerged = null;
-    if (extractedDataList.length > 0) {
-      pdfMerged = mergePropertyData(extractedDataList);
-    }
-
-    // Combine PDF and text data
-    let finalData = null;
-    if (pdfMerged && textData) {
-      // Merge both sources - text data takes priority
-      finalData = {
-        ...pdfMerged,
-        ...textData.propertyData,
-        confidence: Math.round((pdfMerged.confidence + textData.confidence) / 2),
-        extractedFields: Array.from(new Set([...pdfMerged.extractedFields, ...textData.extractedFields])),
-      };
-    } else if (pdfMerged) {
-      finalData = pdfMerged;
-    } else if (textData) {
-      finalData = {
-        ...textData.propertyData,
-        confidence: textData.confidence,
-        extractedFields: textData.extractedFields,
-      };
-    }
-
-    if (!finalData) {
+    if (!allText.trim()) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'No data could be extracted' } },
+        { error: { code: 'VALIDATION_ERROR', message: 'No content to analyze' } },
         { status: 400 }
       );
     }
 
-    // Determine missing fields
-    const requiredFields = ['developer', 'city', 'price', 'areaSqFt', 'propertyType'];
-    const missingFields = requiredFields.filter(f => !finalData![f as keyof typeof finalData]);
+    // Generate AI summary
+    const summary = await generateDocumentSummary(allText, language);
 
     return NextResponse.json({
       success: true,
       data: {
-        propertyData: finalData,
-        confidence: finalData.confidence,
-        extractedFields: finalData.extractedFields || [],
-        missingFields,
-        warnings,
+        summary,
+        rawText: allText,
+        fileNames,
       },
     });
   } catch (error) {

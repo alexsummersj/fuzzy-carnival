@@ -128,6 +128,48 @@ class OpenAIProvider implements LLMProvider {
       return null;
     }
   }
+
+  async generateSummary(text: string, language: string): Promise<string> {
+    if (!this.apiKey) {
+      return 'AI summary not available';
+    }
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.extractionModel,
+          messages: [
+            {
+              role: 'system',
+              content: getSummarySystemPrompt(language),
+            },
+            {
+              role: 'user',
+              content: buildSummaryPrompt(text, language),
+            },
+          ],
+          max_tokens: 500,
+          temperature: 0.3,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('OpenAI summary error:', await response.text());
+        return 'Failed to generate summary';
+      }
+
+      const data = await response.json();
+      return data.choices[0]?.message?.content || 'No summary generated';
+    } catch (error) {
+      console.error('OpenAI summary failed:', error);
+      return 'Failed to generate summary';
+    }
+  }
 }
 
 /**
@@ -234,6 +276,45 @@ class AnthropicProvider implements LLMProvider {
       return null;
     }
   }
+
+  async generateSummary(text: string, language: string): Promise<string> {
+    if (!this.apiKey) {
+      return 'AI summary not available';
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.extractionModel,
+          max_tokens: 500,
+          system: getSummarySystemPrompt(language),
+          messages: [
+            {
+              role: 'user',
+              content: buildSummaryPrompt(text, language),
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Anthropic summary error:', await response.text());
+        return 'Failed to generate summary';
+      }
+
+      const data = await response.json();
+      return data.content[0]?.text || 'No summary generated';
+    } catch (error) {
+      console.error('Anthropic summary failed:', error);
+      return 'Failed to generate summary';
+    }
+  }
 }
 
 /**
@@ -255,6 +336,53 @@ class MockLLMProvider implements LLMProvider {
     // Mock provider doesn't support AI extraction, fallback to regex
     return null;
   }
+
+  async generateSummary(): Promise<string> {
+    return 'AI summary not available in mock mode. Please configure OpenAI or Anthropic API key.';
+  }
+}
+
+/**
+ * Get system prompt for document summary
+ */
+function getSummarySystemPrompt(language: string): string {
+  const langName = getLanguageName(language);
+  return `You are a real estate document analyzer. Your task is to read property documents (brochures, listings, broker messages) and provide a brief, informative summary in ${langName}.
+
+Focus on:
+- Property name and location
+- Developer (if mentioned)
+- Key features (bedrooms, size, price if available)
+- Status (off-plan, ready, etc.)
+- Any notable details
+
+Be concise - 2-3 sentences maximum. Write in ${langName}.`;
+}
+
+/**
+ * Build prompt for document summary
+ */
+function buildSummaryPrompt(text: string, language: string): string {
+  const langName = getLanguageName(language);
+  return `Summarize this property document in ${langName}. Be brief and factual (2-3 sentences):
+
+${text.slice(0, 6000)}`;
+}
+
+/**
+ * Generate document summary using AI
+ */
+export async function generateDocumentSummary(
+  text: string,
+  language: string = 'en'
+): Promise<string> {
+  const provider = getLLMProvider();
+
+  if (provider.generateSummary) {
+    return provider.generateSummary(text, language);
+  }
+
+  return 'Summary generation not available';
 }
 
 /**

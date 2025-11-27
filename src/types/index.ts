@@ -291,6 +291,11 @@ export interface LLMProvider {
     text: string,
     sourceType: 'pdf' | 'text'
   ): Promise<Partial<PropertyData> | null>;
+
+  generateSummary?(
+    text: string,
+    language: string
+  ): Promise<string>;
 }
 
 export interface ExtractedPropertyData {
