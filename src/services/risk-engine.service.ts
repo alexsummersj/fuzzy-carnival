@@ -367,18 +367,17 @@ function calculateMarketRisk(
     }
   }
 
-  // Price growth trend
-  if (locationData.found && locationData.priceGrowthYoY !== null) {
-    const growthImpact = locationData.priceGrowthYoY > 5 ? -10 :
-                        locationData.priceGrowthYoY > 0 ? -5 :
-                        locationData.priceGrowthYoY > -5 ? 5 : 15;
+  // Use AI demand score for market assessment
+  if (locationData.found && locationData.demandScore) {
+    const demandImpact = locationData.demandScore >= 70 ? -10 :
+                        locationData.demandScore >= 50 ? 0 : 10;
     factors.push({
-      name: 'price_trend',
-      impact: growthImpact < 0 ? 'positive' : growthImpact > 5 ? 'negative' : 'neutral',
-      score: growthImpact,
-      description: `Area price growth: ${locationData.priceGrowthYoY}% YoY`,
+      name: 'market_demand',
+      impact: demandImpact < 0 ? 'positive' : demandImpact > 0 ? 'negative' : 'neutral',
+      score: demandImpact,
+      description: `Area demand score: ${locationData.demandScore}/100`,
     });
-    baseScore += growthImpact;
+    baseScore += demandImpact;
   }
 
   // Bedroom configuration (affects liquidity)
