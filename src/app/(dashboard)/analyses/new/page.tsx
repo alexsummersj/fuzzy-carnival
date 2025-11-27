@@ -111,8 +111,15 @@ export default function NewAnalysisPage() {
       formData.append('inputType', inputType);
       formData.append('language', language);
 
-      // Send raw text + additional info for AI to process
-      const fullText = rawText + (additionalInfo ? `\n\n--- Additional Information ---\n${additionalInfo}` : '');
+      // Include AI summary + raw text + additional info for AI to process
+      let fullText = '';
+      if (summary) {
+        fullText += `--- AI Extracted Summary ---\n${summary}\n\n`;
+      }
+      fullText += rawText;
+      if (additionalInfo) {
+        fullText += `\n\n--- Additional Information from User ---\n${additionalInfo}`;
+      }
       formData.append('textInput', fullText);
 
       if (files.length > 0) {
