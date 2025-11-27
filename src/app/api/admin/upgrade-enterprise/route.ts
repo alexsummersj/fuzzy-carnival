@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
           monthlyAnalysisLimit: -1,
           maxPdfUploads: 100,
           maxTextLength: 100000,
-          price: 0,
+          priceMonthly: 0,
+          priceYearly: 0,
           features: ['Unlimited analyses', 'Priority support', 'API access', 'All features']
         }
       });
