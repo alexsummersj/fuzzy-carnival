@@ -140,7 +140,7 @@ class AnthropicProvider implements LLMProvider {
 
   constructor() {
     this.apiKey = process.env.ANTHROPIC_API_KEY || '';
-    this.model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-20250514';
+    this.model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-5-20251101';
     this.extractionModel = process.env.ANTHROPIC_EXTRACTION_MODEL || 'claude-sonnet-4-20250514';
   }
 
