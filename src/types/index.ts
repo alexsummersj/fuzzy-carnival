@@ -296,6 +296,21 @@ export interface LLMProvider {
     text: string,
     language: string
   ): Promise<string>;
+
+  evaluateDeveloper?(
+    developerName: string,
+    country?: string
+  ): Promise<DeveloperEvaluation>;
+}
+
+export interface DeveloperEvaluation {
+  found: boolean;
+  reputationScore: number; // 0-100, higher is better
+  riskScore: number; // 0-100, higher is riskier
+  projectsCompleted: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
 }
 
 export interface ExtractedPropertyData {

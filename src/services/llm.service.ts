@@ -315,6 +315,115 @@ class AnthropicProvider implements LLMProvider {
       return 'Failed to generate summary';
     }
   }
+
+  async evaluateDeveloper(developerName: string, country?: string): Promise<{
+    found: boolean;
+    reputationScore: number;
+    riskScore: number;
+    projectsCompleted: number;
+    description: string;
+    concerns: string[];
+    positives: string[];
+  }> {
+    if (!this.apiKey || !developerName) {
+      return {
+        found: false,
+        reputationScore: 50,
+        riskScore: 50,
+        projectsCompleted: 0,
+        description: 'Developer evaluation not available',
+        concerns: ['Unable to evaluate developer'],
+        positives: [],
+      };
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.extractionModel,
+          max_tokens: 1000,
+          system: `You are a real estate expert with deep knowledge of property developers worldwide.
+Your task is to evaluate a property developer and provide a risk assessment.
+
+You must respond with ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
+{
+  "found": true/false (whether you have information about this developer),
+  "reputationScore": 0-100 (higher is better reputation),
+  "riskScore": 0-100 (higher means more risky),
+  "projectsCompleted": number (approximate, 0 if unknown),
+  "description": "Brief description of the developer",
+  "concerns": ["list of concerns or risk factors"],
+  "positives": ["list of positive factors"]
+}
+
+If you don't know the developer, still try to evaluate based on:
+- Company name recognition
+- Market presence
+- Country/region reputation for developers
+
+Be objective and conservative in your assessment.`,
+          messages: [
+            {
+              role: 'user',
+              content: `Evaluate this property developer: "${developerName}"${country ? ` operating in ${country}` : ''}.
+
+Provide your assessment as JSON only.`,
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Anthropic developer evaluation error:', await response.text());
+        return {
+          found: false,
+          reputationScore: 50,
+          riskScore: 50,
+          projectsCompleted: 0,
+          description: 'Evaluation failed',
+          concerns: ['Unable to evaluate developer'],
+          positives: [],
+        };
+      }
+
+      const data = await response.json();
+      const content = data.content[0]?.text || '';
+
+      // Extract JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('No JSON in response');
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        found: parsed.found ?? true,
+        reputationScore: Math.min(100, Math.max(0, parsed.reputationScore ?? 50)),
+        riskScore: Math.min(100, Math.max(0, parsed.riskScore ?? 50)),
+        projectsCompleted: parsed.projectsCompleted ?? 0,
+        description: parsed.description || 'No description available',
+        concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
+        positives: Array.isArray(parsed.positives) ? parsed.positives : [],
+      };
+    } catch (error) {
+      console.error('Developer evaluation failed:', error);
+      return {
+        found: false,
+        reputationScore: 50,
+        riskScore: 50,
+        projectsCompleted: 0,
+        description: 'Evaluation failed',
+        concerns: ['Unable to evaluate developer'],
+        positives: [],
+      };
+    }
+  }
 }
 
 /**
@@ -388,6 +497,38 @@ export async function generateDocumentSummary(
   }
 
   return 'Summary generation not available';
+}
+
+/**
+ * Evaluate a developer using AI
+ */
+export async function evaluateDeveloperWithAI(
+  developerName: string,
+  country?: string
+): Promise<{
+  found: boolean;
+  reputationScore: number;
+  riskScore: number;
+  projectsCompleted: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
+}> {
+  const provider = getLLMProvider();
+
+  if (provider.evaluateDeveloper) {
+    return provider.evaluateDeveloper(developerName, country);
+  }
+
+  return {
+    found: false,
+    reputationScore: 50,
+    riskScore: 50,
+    projectsCompleted: 0,
+    description: 'Developer evaluation not available',
+    concerns: ['AI evaluation not configured'],
+    positives: [],
+  };
 }
 
 /**

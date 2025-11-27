@@ -20,6 +20,7 @@ import {
 } from '@/config/risk-engine';
 import { prisma } from '@/lib/db';
 import { clamp, normalizeString } from '@/lib/utils';
+import { evaluateDeveloperWithAI } from '@/services/llm.service';
 
 /**
  * External data interfaces for risk enrichment
@@ -27,10 +28,11 @@ import { clamp, normalizeString } from '@/lib/utils';
 interface DeveloperRiskData {
   found: boolean;
   reputationScore: number;
+  riskScore: number;
   projectsCompleted: number;
-  delayHistory: number;
-  qualityRating: number;
-  isVerified: boolean;
+  description: string;
+  concerns: string[];
+  positives: string[];
 }
 
 interface LocationRiskData {
@@ -57,7 +59,7 @@ export async function calculateRiskScores(
 ): Promise<RiskScores> {
   // Fetch enrichment data
   const [developerData, locationData, countryData] = await Promise.all([
-    fetchDeveloperData(propertyData.developerNormalized || propertyData.developer),
+    fetchDeveloperData(propertyData.developerNormalized || propertyData.developer, propertyData.country),
     fetchLocationData(propertyData.countryCode, propertyData.city, propertyData.area),
     fetchCountryData(propertyData.countryCode),
   ]);
@@ -117,62 +119,73 @@ function calculateDeveloperRisk(
   const factors: RiskFactor[] = [];
   let baseScore = 50; // Start at medium risk
 
-  if (!propertyData.developer || !developerData.found) {
-    // Unknown developer - high risk
+  if (!propertyData.developer) {
+    // No developer mentioned - high risk
     factors.push({
       name: 'unknown_developer',
       impact: 'negative',
       score: defaultRiskConfig.developerRules.unknownDeveloperPenalty,
-      description: 'Developer is unknown or not in our database',
+      description: 'Developer is not specified in the documents',
     });
     baseScore += defaultRiskConfig.developerRules.unknownDeveloperPenalty;
-  } else {
-    // Known developer - use reputation data
-    const reputationImpact = (100 - developerData.reputationScore) * defaultRiskConfig.developerRules.reputationWeight;
+  } else if (!developerData.found) {
+    // Developer mentioned but AI couldn't find information
     factors.push({
-      name: 'reputation_score',
-      impact: developerData.reputationScore >= 70 ? 'positive' : developerData.reputationScore >= 50 ? 'neutral' : 'negative',
-      score: reputationImpact,
-      description: `Developer reputation: ${developerData.reputationScore}/100`,
+      name: 'unverified_developer',
+      impact: 'negative',
+      score: 20,
+      description: `Developer "${propertyData.developer}" - limited information available`,
     });
-    baseScore = 100 - developerData.reputationScore;
+    baseScore = 60;
+  } else {
+    // AI evaluated the developer - use AI risk score directly
+    baseScore = developerData.riskScore;
 
-    // Delay history
-    if (developerData.delayHistory > 0) {
-      const delayPenalty = Math.min(developerData.delayHistory * defaultRiskConfig.developerRules.delayHistoryWeight, 30);
-      factors.push({
-        name: 'delay_history',
-        impact: 'negative',
-        score: delayPenalty,
-        description: `Average project delay: ${developerData.delayHistory} months`,
-      });
-      baseScore += delayPenalty;
-    }
+    // Add reputation factor
+    factors.push({
+      name: 'ai_reputation',
+      impact: developerData.reputationScore >= 70 ? 'positive' : developerData.reputationScore >= 50 ? 'neutral' : 'negative',
+      score: developerData.riskScore,
+      description: developerData.description,
+    });
+
+    // Add concerns as risk factors
+    developerData.concerns.forEach((concern, index) => {
+      if (index < 3) { // Limit to 3 concerns
+        factors.push({
+          name: `concern_${index + 1}`,
+          impact: 'negative',
+          score: 0, // Already included in riskScore
+          description: concern,
+        });
+      }
+    });
+
+    // Add positives as factors
+    developerData.positives.forEach((positive, index) => {
+      if (index < 3) { // Limit to 3 positives
+        factors.push({
+          name: `positive_${index + 1}`,
+          impact: 'positive',
+          score: 0, // Already included in riskScore
+          description: positive,
+        });
+      }
+    });
 
     // Projects completed bonus
     if (developerData.projectsCompleted > 10) {
       const completedBonus = Math.min(
         Math.floor(developerData.projectsCompleted / 10) * defaultRiskConfig.developerRules.projectsCompletedBonus,
-        20
+        15
       );
       factors.push({
         name: 'track_record',
         impact: 'positive',
         score: -completedBonus,
-        description: `${developerData.projectsCompleted} projects completed`,
+        description: `Approximately ${developerData.projectsCompleted} projects completed`,
       });
       baseScore -= completedBonus;
-    }
-
-    // Verified status
-    if (developerData.isVerified) {
-      factors.push({
-        name: 'verified_developer',
-        impact: 'positive',
-        score: -5,
-        description: 'Developer is verified in our system',
-      });
-      baseScore -= 5;
     }
   }
 
@@ -471,51 +484,37 @@ function calculateRegulatoryRisk(
 }
 
 /**
- * Fetch developer data from database
+ * Fetch developer data using AI evaluation
  */
-async function fetchDeveloperData(developerName?: string): Promise<DeveloperRiskData> {
+async function fetchDeveloperData(developerName?: string, country?: string): Promise<DeveloperRiskData> {
   if (!developerName) {
     return {
       found: false,
       reputationScore: 50,
+      riskScore: 50,
       projectsCompleted: 0,
-      delayHistory: 0,
-      qualityRating: 50,
-      isVerified: false,
+      description: 'No developer specified',
+      concerns: ['Developer not identified'],
+      positives: [],
     };
   }
 
   try {
-    const developer = await prisma.developerProfile.findFirst({
-      where: {
-        OR: [
-          { normalizedName: normalizeString(developerName) },
-          { name: { contains: developerName, mode: 'insensitive' } },
-        ],
-      },
-    });
-
-    if (developer) {
-      return {
-        found: true,
-        reputationScore: developer.reputationScore,
-        projectsCompleted: developer.projectsCompleted,
-        delayHistory: developer.delayHistory,
-        qualityRating: developer.qualityRating,
-        isVerified: developer.isVerified,
-      };
-    }
+    // Use AI to evaluate the developer
+    const aiEvaluation = await evaluateDeveloperWithAI(developerName, country);
+    return aiEvaluation;
   } catch (error) {
-    console.error('Error fetching developer data:', error);
+    console.error('Error evaluating developer with AI:', error);
   }
 
   return {
     found: false,
     reputationScore: 50,
+    riskScore: 50,
     projectsCompleted: 0,
-    delayHistory: 0,
-    qualityRating: 50,
-    isVerified: false,
+    description: 'Evaluation failed',
+    concerns: ['Unable to evaluate developer'],
+    positives: [],
   };
 }
 
@@ -684,15 +683,21 @@ function formatPropertyType(type?: string): string {
  */
 function generateDeveloperSummary(score: number, data: DeveloperRiskData): string {
   if (!data.found) {
-    return 'Developer not found in our database. Exercise additional caution and conduct independent research.';
+    return 'Limited information available about this developer. Exercise additional caution and conduct independent research.';
   }
+
+  // Use AI-generated description if available
+  if (data.description && data.description !== 'No description available') {
+    return data.description;
+  }
+
   if (score <= 30) {
-    return `Well-established developer with strong track record (${data.projectsCompleted} projects, ${data.reputationScore}/100 reputation).`;
+    return `Well-established developer with strong track record (${data.projectsCompleted > 0 ? `~${data.projectsCompleted} projects, ` : ''}${data.reputationScore}/100 reputation).`;
   }
   if (score <= 50) {
-    return `Developer has moderate track record. Some delays reported (avg ${data.delayHistory} months).`;
+    return `Developer has moderate track record. Reputation score: ${data.reputationScore}/100.`;
   }
-  return `Developer has limited track record or history of delays. Recommend thorough due diligence.`;
+  return `Developer has limited track record or concerns identified. Recommend thorough due diligence.`;
 }
 
 /**
