@@ -137,7 +137,7 @@ class AnthropicProvider implements LLMProvider {
 
   constructor() {
     this.apiKey = process.env.ANTHROPIC_API_KEY || '';
-    this.model = process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241022';
+    this.model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-20250514';
   }
 
   async generateReport(
