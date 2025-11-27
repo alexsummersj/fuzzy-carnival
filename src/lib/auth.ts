@@ -1,26 +1,24 @@
-import NextAuth from 'next-auth';
-import Credentials from 'next-auth/providers/credentials';
-import { PrismaAdapter } from '@auth/prisma-adapter';
+import { NextAuthOptions, getServerSession } from 'next-auth';
+import CredentialsProvider from 'next-auth/providers/credentials';
+import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import bcrypt from 'bcryptjs';
 import { prisma } from './db';
 import { z } from 'zod';
-import type { Adapter } from 'next-auth/adapters';
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
 });
 
-export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: PrismaAdapter(prisma) as Adapter,
+export const authOptions: NextAuthOptions = {
+  adapter: PrismaAdapter(prisma),
   session: { strategy: 'jwt' },
-  trustHost: true,
   pages: {
     signIn: '/login',
     error: '/login',
   },
   providers: [
-    Credentials({
+    CredentialsProvider({
       name: 'credentials',
       credentials: {
         email: { label: 'Email', type: 'email' },
@@ -68,7 +66,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.preferredLanguage = (user as any).preferredLanguage || 'en';
       }
 
-      // Handle session updates
       if (trigger === 'update' && session) {
         if (session.preferredLanguage) {
           token.preferredLanguage = session.preferredLanguage;
@@ -88,40 +85,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       return session;
     },
   },
-});
+};
 
-/**
- * Hash a password using bcrypt
- */
+export async function auth() {
+  return getServerSession(authOptions);
+}
+
 export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, 12);
 }
 
-/**
- * Verify a password against a hash
- */
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
 }
 
-/**
- * Get the current session on the server side
- */
-export async function getServerSession() {
-  return auth();
-}
-
-/**
- * Check if user is authenticated
- */
 export async function isAuthenticated(): Promise<boolean> {
   const session = await auth();
   return !!session?.user;
 }
 
-/**
- * Get current user ID
- */
 export async function getCurrentUserId(): Promise<string | null> {
   const session = await auth();
   return session?.user?.id || null;
