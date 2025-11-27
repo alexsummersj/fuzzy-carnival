@@ -347,16 +347,18 @@ class MockLLMProvider implements LLMProvider {
  */
 function getSummarySystemPrompt(language: string): string {
   const langName = getLanguageName(language);
-  return `You are a real estate document analyzer. Your task is to read property documents (brochures, listings, broker messages) and provide a brief, informative summary in ${langName}.
+  return `You are a real estate document analyzer. Your task is to read property documents (brochures, listings, broker messages) and extract key information in ${langName}.
 
-Focus on:
-- Property name and location
-- Developer (if mentioned)
-- Key features (bedrooms, size, price if available)
-- Status (off-plan, ready, etc.)
-- Any notable details
+IMPORTANT: Always include these details if found in the document:
+1. **Developer/Builder** - company name that built or is building the property (REQUIRED if present)
+2. **Project/Property name** - name of the building or development
+3. **Location** - area, district, city
+4. **Property type** - apartment, villa, townhouse, etc.
+5. **Size** - square meters/feet, number of bedrooms
+6. **Price** - if mentioned
+7. **Status** - off-plan, under construction, ready
 
-Be concise - 2-3 sentences maximum. Write in ${langName}.`;
+Format: Write a structured summary with all found details. Use 3-5 sentences. Always mention the developer if it appears anywhere in the document. Write in ${langName}.`;
 }
 
 /**
@@ -364,9 +366,12 @@ Be concise - 2-3 sentences maximum. Write in ${langName}.`;
  */
 function buildSummaryPrompt(text: string, language: string): string {
   const langName = getLanguageName(language);
-  return `Summarize this property document in ${langName}. Be brief and factual (2-3 sentences):
+  return `Analyze this property document and extract all key information in ${langName}.
 
-${text.slice(0, 6000)}`;
+CRITICAL: Look carefully for the developer/builder name - it may appear as "by [Developer]", "developed by", "a project by", or the company logo/header. This is the most important field to extract.
+
+Document text:
+${text.slice(0, 8000)}`;
 }
 
 /**
