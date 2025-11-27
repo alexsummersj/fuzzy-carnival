@@ -1,0 +1,71 @@
+# Docker Compose для локальной разработки
+# Запуск: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: risklens-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: risklens
+      POSTGRES_USER: risklens
+      POSTGRES_PASSWORD: risklens_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U risklens -d risklens"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (для кэширования сессий, опционально)
+  redis:
+    image: redis:7-alpine
+    container_name: risklens-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Next.js Application (development)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: risklens-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://risklens:risklens_dev_password@db:5432/risklens?schema=public
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=dev-secret-change-in-production
+      - LLM_PROVIDER=mock
+      - FILE_STORAGE_PROVIDER=local
+      - FILE_STORAGE_PATH=/app/uploads
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

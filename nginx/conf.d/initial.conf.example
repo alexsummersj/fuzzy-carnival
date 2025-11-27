@@ -1,0 +1,32 @@
+# Начальная конфигурация БЕЗ SSL
+# Используйте эту конфигурацию для первоначального получения SSL сертификата
+#
+# 1. Переименуйте этот файл в default.conf
+# 2. Замените YOUR_DOMAIN.com на ваш домен
+# 3. Запустите: docker-compose -f docker-compose.prod.yml up -d
+# 4. Получите сертификат: ./scripts/init-ssl.sh
+# 5. Замените на полную конфигурацию с SSL
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name YOUR_DOMAIN.com www.YOUR_DOMAIN.com;
+
+    # Для Certbot
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Проксирование на приложение (временно без SSL)
+    location / {
+        proxy_pass http://nextjs;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
