@@ -1,0 +1,285 @@
+// Prisma schema for Real Estate Risk Analysis Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// User & Authentication Models
+// ============================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  emailVerified   DateTime?
+  passwordHash    String?
+  name            String?
+  preferredLanguage String  @default("en")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  subscription    Subscription?
+  analyses        Analysis[]
+  accounts        Account[]
+  sessions        Session[]
+  passwordResets  PasswordReset[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("password_resets")
+}
+
+// ============================================
+// Subscription & Pricing Models
+// ============================================
+
+enum PlanType {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+model Plan {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  type                PlanType @unique
+  monthlyAnalysisLimit Int     // -1 for unlimited
+  maxPdfUploads       Int      // per analysis
+  maxTextLength       Int      // max characters for text input
+  priceMonthly        Float    // in USD, 0 for free
+  priceYearly         Float    // in USD, 0 for free
+  features            Json     // Array of feature strings
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+model Subscription {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  planId                String
+  status                String   @default("active") // active, cancelled, past_due
+  currentPeriodStart    DateTime @default(now())
+  currentPeriodEnd      DateTime
+  analysesUsedThisMonth Int      @default(0)
+  stripeCustomerId      String?
+  stripeSubscriptionId  String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+// ============================================
+// Analysis Models
+// ============================================
+
+enum AnalysisStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum InputType {
+  PDF
+  TEXT
+  MIXED
+}
+
+enum TrafficLight {
+  GREEN
+  YELLOW
+  RED
+}
+
+model Analysis {
+  id                String         @id @default(cuid())
+  userId            String
+  status            AnalysisStatus @default(PENDING)
+  inputType         InputType
+
+  // Raw inputs
+  rawTextInput      String?        @db.Text
+
+  // Parsed & normalized property data (JSON)
+  propertyData      Json?
+
+  // Risk scores (JSON object with category scores)
+  riskScores        Json?
+  overallRiskScore  Float?
+  trafficLight      TrafficLight?
+
+  // Generated report
+  reportLanguage    String         @default("en")
+  reportContent     Json?          // Structured report content
+  reportNarrative   String?        @db.Text
+
+  // Metadata
+  propertyName      String?
+  propertyLocation  String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  // Relations
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents         Document[]
+
+  @@index([userId, createdAt])
+  @@map("analyses")
+}
+
+model Document {
+  id            String   @id @default(cuid())
+  analysisId    String
+  originalName  String
+  storagePath   String
+  mimeType      String
+  fileSize      Int
+  extractedText String?  @db.Text
+  metadata      Json?    // Any extracted metadata
+  createdAt     DateTime @default(now())
+
+  analysis Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+// ============================================
+// Configuration & Reference Data
+// ============================================
+
+model DeveloperProfile {
+  id               String   @id @default(cuid())
+  name             String
+  normalizedName   String   @unique // lowercase, trimmed for matching
+  country          String?
+  reputationScore  Float    @default(50) // 0-100
+  projectsCompleted Int     @default(0)
+  delayHistory     Float    @default(0) // average delay in months
+  qualityRating    Float    @default(50) // 0-100
+  notes            String?  @db.Text
+  isVerified       Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("developer_profiles")
+}
+
+model LocationProfile {
+  id                  String   @id @default(cuid())
+  country             String
+  city                String
+  area                String?
+  normalizedKey       String   @unique // e.g., "ae-dubai-downtown"
+  demandScore         Float    @default(50) // 0-100
+  infrastructureScore Float    @default(50) // 0-100
+  vacancyRate         Float?   // percentage
+  priceGrowthYoY      Float?   // year-over-year percentage
+  rentalYield         Float?   // percentage
+  riskFactors         Json?    // Array of risk factor strings
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([country, city])
+  @@map("location_profiles")
+}
+
+model CountryRiskProfile {
+  id                   String   @id @default(cuid())
+  countryCode          String   @unique // ISO 3166-1 alpha-2
+  countryName          String
+  regulatoryRisk       Float    @default(50) // 0-100
+  legalSecurityScore   Float    @default(50) // 0-100
+  geopoliticalRisk     Float    @default(50) // 0-100
+  currencyRisk         Float    @default(50) // 0-100
+  foreignOwnershipRules Json?   // Description of rules
+  notes                String?  @db.Text
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("country_risk_profiles")
+}
+
+// ============================================
+// Audit & Logging
+// ============================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
