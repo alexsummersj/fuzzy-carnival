@@ -198,8 +198,8 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
     // Merge all sources (form data takes priority)
     const propertyData = mergePropertySources(pdfPropertyData, textPropertyData, formData || null);
 
-    // Calculate risk scores
-    const riskScores = await calculateRiskScores(propertyData);
+    // Calculate risk scores with language for AI responses
+    const riskScores = await calculateRiskScores(propertyData, language);
 
     // Generate report
     const report = await generateReport(propertyData, riskScores, language);

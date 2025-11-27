@@ -316,7 +316,7 @@ class AnthropicProvider implements LLMProvider {
     }
   }
 
-  async evaluateDeveloper(developerName: string, country?: string): Promise<{
+  async evaluateDeveloper(developerName: string, country?: string, language?: string): Promise<{
     found: boolean;
     reputationScore: number;
     riskScore: number;
@@ -337,6 +337,8 @@ class AnthropicProvider implements LLMProvider {
       };
     }
 
+    const langName = getLanguageName(language || 'en');
+
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -351,15 +353,17 @@ class AnthropicProvider implements LLMProvider {
           system: `You are a real estate expert with deep knowledge of property developers worldwide.
 Your task is to evaluate a property developer and provide a risk assessment.
 
+IMPORTANT: Write all text fields (description, concerns, positives) in ${langName}.
+
 You must respond with ONLY a valid JSON object (no markdown, no explanation) with this exact structure:
 {
   "found": true/false (whether you have information about this developer),
   "reputationScore": 0-100 (higher is better reputation),
   "riskScore": 0-100 (higher means more risky),
   "projectsCompleted": number (approximate, 0 if unknown),
-  "description": "Brief description of the developer",
-  "concerns": ["list of concerns or risk factors"],
-  "positives": ["list of positive factors"]
+  "description": "Brief description of the developer in ${langName}",
+  "concerns": ["list of concerns in ${langName}"],
+  "positives": ["list of positives in ${langName}"]
 }
 
 If you don't know the developer, still try to evaluate based on:
@@ -373,7 +377,7 @@ Be objective and conservative in your assessment.`,
               role: 'user',
               content: `Evaluate this property developer: "${developerName}"${country ? ` operating in ${country}` : ''}.
 
-Provide your assessment as JSON only.`,
+Provide your assessment as JSON only. Write description, concerns, and positives in ${langName}.`,
             },
           ],
         }),
@@ -422,6 +426,169 @@ Provide your assessment as JSON only.`,
         concerns: ['Unable to evaluate developer'],
         positives: [],
       };
+    }
+  }
+
+  async evaluateLocation(city: string, area?: string, country?: string, language?: string): Promise<{
+    found: boolean;
+    demandScore: number;
+    infrastructureScore: number;
+    riskScore: number;
+    description: string;
+    concerns: string[];
+    positives: string[];
+  }> {
+    if (!this.apiKey || !city) {
+      return {
+        found: false,
+        demandScore: 50,
+        infrastructureScore: 50,
+        riskScore: 50,
+        description: 'Location evaluation not available',
+        concerns: [],
+        positives: [],
+      };
+    }
+
+    const langName = getLanguageName(language || 'en');
+
+    try {
+      const locationStr = [area, city, country].filter(Boolean).join(', ');
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.extractionModel,
+          max_tokens: 1000,
+          system: `You are a real estate market expert with knowledge of property markets worldwide.
+Evaluate the location for real estate investment.
+
+IMPORTANT: Write all text fields (description, concerns, positives) in ${langName}.
+
+Respond with ONLY a valid JSON object:
+{
+  "found": true/false,
+  "demandScore": 0-100 (higher = more demand),
+  "infrastructureScore": 0-100 (higher = better infrastructure),
+  "riskScore": 0-100 (higher = more risky for investment),
+  "description": "Brief assessment in ${langName}",
+  "concerns": ["list of concerns in ${langName}"],
+  "positives": ["list of positives in ${langName}"]
+}
+
+Consider: property demand, rental yields, infrastructure, transport, amenities, future development, price trends.`,
+          messages: [{ role: 'user', content: `Evaluate this location for property investment: ${locationStr}. Write in ${langName}.` }],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Location evaluation error:', await response.text());
+        return { found: false, demandScore: 50, infrastructureScore: 50, riskScore: 50, description: 'Evaluation failed', concerns: [], positives: [] };
+      }
+
+      const data = await response.json();
+      const content = data.content[0]?.text || '';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON');
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        found: parsed.found ?? true,
+        demandScore: Math.min(100, Math.max(0, parsed.demandScore ?? 50)),
+        infrastructureScore: Math.min(100, Math.max(0, parsed.infrastructureScore ?? 50)),
+        riskScore: Math.min(100, Math.max(0, parsed.riskScore ?? 50)),
+        description: parsed.description || '',
+        concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
+        positives: Array.isArray(parsed.positives) ? parsed.positives : [],
+      };
+    } catch (error) {
+      console.error('Location evaluation failed:', error);
+      return { found: false, demandScore: 50, infrastructureScore: 50, riskScore: 50, description: 'Evaluation failed', concerns: [], positives: [] };
+    }
+  }
+
+  async evaluateCountryRisk(country: string, language?: string): Promise<{
+    found: boolean;
+    regulatoryRisk: number;
+    legalSecurityScore: number;
+    riskScore: number;
+    description: string;
+    concerns: string[];
+    positives: string[];
+  }> {
+    if (!this.apiKey || !country) {
+      return {
+        found: false,
+        regulatoryRisk: 50,
+        legalSecurityScore: 50,
+        riskScore: 50,
+        description: 'Country evaluation not available',
+        concerns: [],
+        positives: [],
+      };
+    }
+
+    const langName = getLanguageName(language || 'en');
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.extractionModel,
+          max_tokens: 1000,
+          system: `You are an expert in international real estate law and regulations.
+Evaluate the country/jurisdiction for property investment from regulatory perspective.
+
+IMPORTANT: Write all text fields (description, concerns, positives) in ${langName}.
+
+Respond with ONLY a valid JSON object:
+{
+  "found": true/false,
+  "regulatoryRisk": 0-100 (higher = more regulatory risk),
+  "legalSecurityScore": 0-100 (higher = better legal protection for property owners),
+  "riskScore": 0-100 (overall regulatory risk, higher = riskier),
+  "description": "Brief assessment in ${langName}",
+  "concerns": ["list of concerns in ${langName}"],
+  "positives": ["list of positives in ${langName}"]
+}
+
+Consider: property ownership laws, foreign buyer restrictions, taxes, legal system, political stability, currency stability.`,
+          messages: [{ role: 'user', content: `Evaluate regulatory/legal risk for property investment in: ${country}. Write in ${langName}.` }],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Country evaluation error:', await response.text());
+        return { found: false, regulatoryRisk: 50, legalSecurityScore: 50, riskScore: 50, description: 'Evaluation failed', concerns: [], positives: [] };
+      }
+
+      const data = await response.json();
+      const content = data.content[0]?.text || '';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON');
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        found: parsed.found ?? true,
+        regulatoryRisk: Math.min(100, Math.max(0, parsed.regulatoryRisk ?? 50)),
+        legalSecurityScore: Math.min(100, Math.max(0, parsed.legalSecurityScore ?? 50)),
+        riskScore: Math.min(100, Math.max(0, parsed.riskScore ?? 50)),
+        description: parsed.description || '',
+        concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
+        positives: Array.isArray(parsed.positives) ? parsed.positives : [],
+      };
+    } catch (error) {
+      console.error('Country evaluation failed:', error);
+      return { found: false, regulatoryRisk: 50, legalSecurityScore: 50, riskScore: 50, description: 'Evaluation failed', concerns: [], positives: [] };
     }
   }
 }
@@ -504,7 +671,8 @@ export async function generateDocumentSummary(
  */
 export async function evaluateDeveloperWithAI(
   developerName: string,
-  country?: string
+  country?: string,
+  language?: string
 ): Promise<{
   found: boolean;
   reputationScore: number;
@@ -517,7 +685,7 @@ export async function evaluateDeveloperWithAI(
   const provider = getLLMProvider();
 
   if (provider.evaluateDeveloper) {
-    return provider.evaluateDeveloper(developerName, country);
+    return provider.evaluateDeveloper(developerName, country, language);
   }
 
   return {
@@ -527,6 +695,72 @@ export async function evaluateDeveloperWithAI(
     projectsCompleted: 0,
     description: 'Developer evaluation not available',
     concerns: ['AI evaluation not configured'],
+    positives: [],
+  };
+}
+
+/**
+ * Evaluate a location using AI
+ */
+export async function evaluateLocationWithAI(
+  city: string,
+  area?: string,
+  country?: string,
+  language?: string
+): Promise<{
+  found: boolean;
+  demandScore: number;
+  infrastructureScore: number;
+  riskScore: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
+}> {
+  const provider = getLLMProvider() as any;
+
+  if (provider.evaluateLocation) {
+    return provider.evaluateLocation(city, area, country, language);
+  }
+
+  return {
+    found: false,
+    demandScore: 50,
+    infrastructureScore: 50,
+    riskScore: 50,
+    description: 'Location evaluation not available',
+    concerns: [],
+    positives: [],
+  };
+}
+
+/**
+ * Evaluate country regulatory risk using AI
+ */
+export async function evaluateCountryWithAI(
+  country: string,
+  language?: string
+): Promise<{
+  found: boolean;
+  regulatoryRisk: number;
+  legalSecurityScore: number;
+  riskScore: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
+}> {
+  const provider = getLLMProvider() as any;
+
+  if (provider.evaluateCountryRisk) {
+    return provider.evaluateCountryRisk(country, language);
+  }
+
+  return {
+    found: false,
+    regulatoryRisk: 50,
+    legalSecurityScore: 50,
+    riskScore: 50,
+    description: 'Country evaluation not available',
+    concerns: [],
     positives: [],
   };
 }

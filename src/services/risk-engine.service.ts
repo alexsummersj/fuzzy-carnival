@@ -20,7 +20,7 @@ import {
 } from '@/config/risk-engine';
 import { prisma } from '@/lib/db';
 import { clamp, normalizeString } from '@/lib/utils';
-import { evaluateDeveloperWithAI } from '@/services/llm.service';
+import { evaluateDeveloperWithAI, evaluateLocationWithAI, evaluateCountryWithAI } from '@/services/llm.service';
 
 /**
  * External data interfaces for risk enrichment
@@ -39,29 +39,34 @@ interface LocationRiskData {
   found: boolean;
   demandScore: number;
   infrastructureScore: number;
-  vacancyRate: number | null;
-  priceGrowthYoY: number | null;
+  riskScore: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
 }
 
 interface CountryRiskData {
   found: boolean;
   regulatoryRisk: number;
   legalSecurityScore: number;
-  geopoliticalRisk: number;
-  currencyRisk: number;
+  riskScore: number;
+  description: string;
+  concerns: string[];
+  positives: string[];
 }
 
 /**
  * Main risk calculation function
  */
 export async function calculateRiskScores(
-  propertyData: PropertyData
+  propertyData: PropertyData,
+  language: string = 'en'
 ): Promise<RiskScores> {
-  // Fetch enrichment data
+  // Fetch enrichment data with language for AI responses
   const [developerData, locationData, countryData] = await Promise.all([
-    fetchDeveloperData(propertyData.developerNormalized || propertyData.developer, propertyData.country),
-    fetchLocationData(propertyData.countryCode, propertyData.city, propertyData.area),
-    fetchCountryData(propertyData.countryCode),
+    fetchDeveloperData(propertyData.developerNormalized || propertyData.developer, propertyData.country, language),
+    fetchLocationData(propertyData.countryCode, propertyData.city, propertyData.area, language),
+    fetchCountryData(propertyData.countryCode, language),
   ]);
 
   // Calculate individual category scores
@@ -213,53 +218,45 @@ function calculateLocationRisk(
     factors.push({
       name: 'unknown_location',
       impact: 'negative',
-      score: 30,
-      description: 'Location is not in our database - limited data available',
+      score: 20,
+      description: 'Limited information available for this location',
     });
-    baseScore = 60;
+    baseScore = 55;
   } else {
-    // Demand score
-    const demandImpact = (100 - locationData.demandScore) * defaultRiskConfig.locationRules.demandWeight;
+    // Use AI risk score directly
+    baseScore = locationData.riskScore;
+
+    // Add main AI assessment
     factors.push({
-      name: 'demand_score',
-      impact: locationData.demandScore >= 70 ? 'positive' : locationData.demandScore >= 50 ? 'neutral' : 'negative',
-      score: demandImpact,
-      description: `Area demand rating: ${locationData.demandScore}/100`,
+      name: 'ai_location_assessment',
+      impact: locationData.riskScore <= 40 ? 'positive' : locationData.riskScore <= 60 ? 'neutral' : 'negative',
+      score: locationData.riskScore,
+      description: locationData.description,
     });
 
-    // Infrastructure score
-    const infraImpact = (100 - locationData.infrastructureScore) * defaultRiskConfig.locationRules.infrastructureWeight;
-    factors.push({
-      name: 'infrastructure',
-      impact: locationData.infrastructureScore >= 70 ? 'positive' : 'neutral',
-      score: infraImpact,
-      description: `Infrastructure score: ${locationData.infrastructureScore}/100`,
+    // Add concerns
+    locationData.concerns.forEach((concern, index) => {
+      if (index < 3) {
+        factors.push({
+          name: `location_concern_${index + 1}`,
+          impact: 'negative',
+          score: 0,
+          description: concern,
+        });
+      }
     });
 
-    // Vacancy rate
-    if (locationData.vacancyRate !== null) {
-      const vacancyImpact = locationData.vacancyRate * defaultRiskConfig.locationRules.vacancyWeight;
-      factors.push({
-        name: 'vacancy_rate',
-        impact: locationData.vacancyRate <= 5 ? 'positive' : locationData.vacancyRate <= 10 ? 'neutral' : 'negative',
-        score: vacancyImpact,
-        description: `Area vacancy rate: ${locationData.vacancyRate}%`,
-      });
-    }
-
-    baseScore = demandImpact + infraImpact + (locationData.vacancyRate || 0) * 0.5;
-  }
-
-  // Country adjustment
-  const countryAdjustment = countryRiskAdjustments[propertyData.countryCode || 'AE'] || 0;
-  if (countryAdjustment !== 0) {
-    factors.push({
-      name: 'country_factor',
-      impact: countryAdjustment < 0 ? 'positive' : 'negative',
-      score: countryAdjustment,
-      description: `Country-specific adjustment: ${countryAdjustment > 0 ? '+' : ''}${countryAdjustment}`,
+    // Add positives
+    locationData.positives.forEach((positive, index) => {
+      if (index < 3) {
+        factors.push({
+          name: `location_positive_${index + 1}`,
+          impact: 'positive',
+          score: 0,
+          description: positive,
+        });
+      }
     });
-    baseScore += countryAdjustment;
   }
 
   const finalScore = clamp(Math.round(baseScore), 0, 100);
@@ -423,54 +420,51 @@ function calculateRegulatoryRisk(
   countryData: CountryRiskData
 ): RiskCategoryScore {
   const factors: RiskFactor[] = [];
-  let baseScore = 30;
+  let baseScore = 40;
 
   if (!countryData.found) {
     factors.push({
       name: 'unknown_jurisdiction',
       impact: 'negative',
-      score: 40,
-      description: 'Jurisdiction not in our database',
+      score: 20,
+      description: 'Limited regulatory information available',
     });
-    baseScore = 60;
+    baseScore = 50;
   } else {
-    // Regulatory risk
+    // Use AI risk score directly
+    baseScore = countryData.riskScore;
+
+    // Add main AI assessment
     factors.push({
-      name: 'regulatory_environment',
-      impact: countryData.regulatoryRisk <= 30 ? 'positive' : countryData.regulatoryRisk <= 50 ? 'neutral' : 'negative',
-      score: countryData.regulatoryRisk * 0.3,
-      description: `Regulatory risk score: ${countryData.regulatoryRisk}/100`,
+      name: 'ai_regulatory_assessment',
+      impact: countryData.riskScore <= 40 ? 'positive' : countryData.riskScore <= 60 ? 'neutral' : 'negative',
+      score: countryData.riskScore,
+      description: countryData.description,
     });
 
-    // Legal security
-    const legalImpact = (100 - countryData.legalSecurityScore) * 0.3;
-    factors.push({
-      name: 'legal_security',
-      impact: countryData.legalSecurityScore >= 70 ? 'positive' : 'neutral',
-      score: legalImpact,
-      description: `Legal security score: ${countryData.legalSecurityScore}/100`,
+    // Add concerns
+    countryData.concerns.forEach((concern, index) => {
+      if (index < 3) {
+        factors.push({
+          name: `regulatory_concern_${index + 1}`,
+          impact: 'negative',
+          score: 0,
+          description: concern,
+        });
+      }
     });
 
-    // Geopolitical risk
-    factors.push({
-      name: 'geopolitical',
-      impact: countryData.geopoliticalRisk <= 30 ? 'positive' : countryData.geopoliticalRisk <= 50 ? 'neutral' : 'negative',
-      score: countryData.geopoliticalRisk * 0.2,
-      description: `Geopolitical stability: ${100 - countryData.geopoliticalRisk}/100`,
+    // Add positives
+    countryData.positives.forEach((positive, index) => {
+      if (index < 3) {
+        factors.push({
+          name: `regulatory_positive_${index + 1}`,
+          impact: 'positive',
+          score: 0,
+          description: positive,
+        });
+      }
     });
-
-    // Currency risk
-    factors.push({
-      name: 'currency',
-      impact: countryData.currencyRisk <= 20 ? 'positive' : countryData.currencyRisk <= 40 ? 'neutral' : 'negative',
-      score: countryData.currencyRisk * 0.2,
-      description: `Currency stability: ${100 - countryData.currencyRisk}/100`,
-    });
-
-    baseScore = (countryData.regulatoryRisk * 0.3) +
-                ((100 - countryData.legalSecurityScore) * 0.3) +
-                (countryData.geopoliticalRisk * 0.2) +
-                (countryData.currencyRisk * 0.2);
   }
 
   const finalScore = clamp(Math.round(baseScore), 0, 100);
@@ -486,7 +480,7 @@ function calculateRegulatoryRisk(
 /**
  * Fetch developer data using AI evaluation
  */
-async function fetchDeveloperData(developerName?: string, country?: string): Promise<DeveloperRiskData> {
+async function fetchDeveloperData(developerName?: string, country?: string, language?: string): Promise<DeveloperRiskData> {
   if (!developerName) {
     return {
       found: false,
@@ -501,7 +495,7 @@ async function fetchDeveloperData(developerName?: string, country?: string): Pro
 
   try {
     // Use AI to evaluate the developer
-    const aiEvaluation = await evaluateDeveloperWithAI(developerName, country);
+    const aiEvaluation = await evaluateDeveloperWithAI(developerName, country, language);
     return aiEvaluation;
   } catch (error) {
     console.error('Error evaluating developer with AI:', error);
@@ -524,105 +518,88 @@ async function fetchDeveloperData(developerName?: string, country?: string): Pro
 async function fetchLocationData(
   countryCode?: string,
   city?: string,
-  area?: string
+  area?: string,
+  language?: string
 ): Promise<LocationRiskData> {
   if (!city) {
     return {
       found: false,
       demandScore: 50,
       infrastructureScore: 50,
-      vacancyRate: null,
-      priceGrowthYoY: null,
+      riskScore: 50,
+      description: 'Location not specified',
+      concerns: [],
+      positives: [],
     };
   }
 
   try {
-    // Try to find exact area match first
-    if (area) {
-      const normalizedKey = `${(countryCode || 'ae').toLowerCase()}-${city.toLowerCase().replace(/\s+/g, '')}-${area.toLowerCase().replace(/\s+/g, '')}`;
-      const location = await prisma.locationProfile.findUnique({
-        where: { normalizedKey },
-      });
-
-      if (location) {
-        return {
-          found: true,
-          demandScore: location.demandScore,
-          infrastructureScore: location.infrastructureScore,
-          vacancyRate: location.vacancyRate,
-          priceGrowthYoY: location.priceGrowthYoY,
-        };
-      }
-    }
-
-    // Try city-level match
-    const cityLocation = await prisma.locationProfile.findFirst({
-      where: {
-        city: { equals: city, mode: 'insensitive' },
-        country: countryCode || 'AE',
-      },
-    });
-
-    if (cityLocation) {
-      return {
-        found: true,
-        demandScore: cityLocation.demandScore,
-        infrastructureScore: cityLocation.infrastructureScore,
-        vacancyRate: cityLocation.vacancyRate,
-        priceGrowthYoY: cityLocation.priceGrowthYoY,
-      };
-    }
+    // Use AI to evaluate the location
+    const countryName = getCountryName(countryCode);
+    const aiEvaluation = await evaluateLocationWithAI(city, area, countryName, language);
+    return aiEvaluation;
   } catch (error) {
-    console.error('Error fetching location data:', error);
+    console.error('Error evaluating location with AI:', error);
   }
 
   return {
     found: false,
     demandScore: 50,
     infrastructureScore: 50,
-    vacancyRate: null,
-    priceGrowthYoY: null,
+    riskScore: 50,
+    description: 'Evaluation failed',
+    concerns: [],
+    positives: [],
   };
 }
 
 /**
- * Fetch country risk data from database
+ * Get country name from code
  */
-async function fetchCountryData(countryCode?: string): Promise<CountryRiskData> {
-  if (!countryCode) {
+function getCountryName(code?: string): string {
+  const countries: Record<string, string> = {
+    AE: 'United Arab Emirates',
+    GB: 'United Kingdom',
+    US: 'United States',
+    UK: 'United Kingdom',
+  };
+  return countries[code || ''] || code || '';
+}
+
+/**
+ * Fetch country risk data using AI
+ */
+async function fetchCountryData(countryCode?: string, language?: string): Promise<CountryRiskData> {
+  const countryName = getCountryName(countryCode);
+
+  if (!countryName) {
     return {
       found: false,
       regulatoryRisk: 50,
       legalSecurityScore: 50,
-      geopoliticalRisk: 50,
-      currencyRisk: 50,
+      riskScore: 50,
+      description: 'Country not specified',
+      concerns: [],
+      positives: [],
     };
   }
 
   try {
-    const country = await prisma.countryRiskProfile.findUnique({
-      where: { countryCode },
-    });
-
-    if (country) {
-      return {
-        found: true,
-        regulatoryRisk: country.regulatoryRisk,
-        legalSecurityScore: country.legalSecurityScore,
-        geopoliticalRisk: country.geopoliticalRisk,
-        currencyRisk: country.currencyRisk,
-      };
-    }
+    // Use AI to evaluate the country
+    const aiEvaluation = await evaluateCountryWithAI(countryName, language);
+    return aiEvaluation;
   } catch (error) {
-    console.error('Error fetching country data:', error);
+    console.error('Error evaluating country with AI:', error);
   }
 
   return {
     found: false,
     regulatoryRisk: 50,
     legalSecurityScore: 50,
-    geopoliticalRisk: 50,
-    currencyRisk: 50,
+    riskScore: 50,
+    description: 'Evaluation failed',
+    concerns: [],
+    positives: [],
   };
 }
 
@@ -705,16 +682,23 @@ function generateDeveloperSummary(score: number, data: DeveloperRiskData): strin
  */
 function generateLocationSummary(score: number, property: PropertyData, data: LocationRiskData): string {
   const location = [property.area, property.city, property.country].filter(Boolean).join(', ');
+
   if (!data.found) {
     return `Limited data available for ${location}. Consider local market research.`;
   }
+
+  // Use AI-generated description if available
+  if (data.description && data.description !== 'Evaluation failed') {
+    return data.description;
+  }
+
   if (score <= 30) {
-    return `${location} is a high-demand area with strong infrastructure and low vacancy.`;
+    return `${location} is a high-demand area with strong infrastructure.`;
   }
   if (score <= 50) {
-    return `${location} shows moderate demand. Infrastructure is developing.`;
+    return `${location} shows moderate demand and infrastructure.`;
   }
-  return `${location} may face higher vacancy or limited demand. Consider exit strategy carefully.`;
+  return `${location} may face challenges. Consider exit strategy carefully.`;
 }
 
 /**
@@ -750,16 +734,23 @@ function generateMarketSummary(score: number, property: PropertyData): string {
  */
 function generateRegulatorySummary(score: number, property: PropertyData, data: CountryRiskData): string {
   const country = property.country || 'this jurisdiction';
+
   if (!data.found) {
     return `Limited regulatory data for ${country}. Consult local legal experts.`;
   }
+
+  // Use AI-generated description if available
+  if (data.description && data.description !== 'Evaluation failed') {
+    return data.description;
+  }
+
   if (score <= 30) {
-    return `${country} has stable regulatory environment with strong legal protections for property owners.`;
+    return `${country} has stable regulatory environment with strong legal protections.`;
   }
   if (score <= 50) {
-    return `${country} has moderate regulatory framework. Ensure proper legal documentation.`;
+    return `${country} has moderate regulatory framework.`;
   }
-  return `Higher regulatory or currency risk in ${country}. Consider hedging strategies and legal consultation.`;
+  return `Higher regulatory risk in ${country}. Consider legal consultation.`;
 }
 
 export { getTrafficLight };
