@@ -6,6 +6,7 @@
 
 import type { PropertyData, PropertyType, PropertyStatus, PaymentPlan } from '@/types';
 import { extractNumber, normalizeString, sqmToSqft, sqftToSqm } from '@/lib/utils';
+import { tryAIExtraction } from './llm.service';
 
 export interface TextParseResult {
   propertyData: Partial<PropertyData>;
@@ -802,4 +803,78 @@ export function mergePropertySources(
   }
 
   return normalizePropertyData(merged);
+}
+
+/**
+ * Async version of parsePropertyText that tries AI extraction first
+ * Falls back to regex-based extraction if AI fails or returns poor results
+ */
+export async function parsePropertyTextAsync(text: string): Promise<TextParseResult> {
+  const warnings: string[] = [];
+
+  try {
+    // Try AI extraction first
+    const aiResult = await tryAIExtraction(text, 'text');
+
+    if (aiResult && Object.keys(aiResult).length > 3) {
+      // AI returned useful data - use it
+      const propertyData: Partial<PropertyData> = {
+        ...aiResult,
+        sourceType: 'text',
+        rawText: text,
+      };
+
+      // Calculate extracted fields
+      const extractedFields: string[] = [];
+      if (propertyData.developer) extractedFields.push('developer');
+      if (propertyData.name) extractedFields.push('name');
+      if (propertyData.city || propertyData.area) extractedFields.push('location');
+      if (propertyData.propertyType) extractedFields.push('propertyType');
+      if (propertyData.bedrooms !== undefined) extractedFields.push('bedrooms');
+      if (propertyData.bathrooms !== undefined) extractedFields.push('bathrooms');
+      if (propertyData.areaSqFt || propertyData.areaSqM) extractedFields.push('area');
+      if (propertyData.price) extractedFields.push('price');
+      if (propertyData.paymentPlan) extractedFields.push('paymentPlan');
+      if (propertyData.handoverDate) extractedFields.push('handoverDate');
+      if (propertyData.status) extractedFields.push('status');
+      if (propertyData.floor) extractedFields.push('floor');
+      if (propertyData.view) extractedFields.push('view');
+      if (propertyData.amenities && propertyData.amenities.length > 0) extractedFields.push('amenities');
+      if (propertyData.parkingSpaces) extractedFields.push('parking');
+
+      // Calculate confidence based on required fields
+      const requiredFields = ['developer', 'location', 'price', 'area', 'propertyType'];
+      const foundRequired = requiredFields.filter(f => extractedFields.includes(f));
+      const confidence = Math.round((foundRequired.length / requiredFields.length) * 100);
+
+      // Ensure area conversions
+      if (propertyData.areaSqM && !propertyData.areaSqFt) {
+        propertyData.areaSqFt = sqmToSqft(propertyData.areaSqM);
+      } else if (propertyData.areaSqFt && !propertyData.areaSqM) {
+        propertyData.areaSqM = sqftToSqm(propertyData.areaSqFt);
+      }
+
+      // Calculate price per sqft
+      if (propertyData.price && propertyData.areaSqFt && !propertyData.pricePerSqFt) {
+        propertyData.pricePerSqFt = Math.round(propertyData.price / propertyData.areaSqFt);
+      }
+
+      return {
+        propertyData,
+        confidence,
+        extractedFields,
+        warnings,
+      };
+    }
+  } catch (error) {
+    console.error('AI extraction failed, falling back to regex:', error);
+    warnings.push('AI extraction failed, using pattern matching');
+  }
+
+  // Fallback to regex-based extraction
+  const regexResult = parsePropertyText(text);
+  return {
+    ...regexResult,
+    warnings: [...warnings, ...regexResult.warnings],
+  };
 }

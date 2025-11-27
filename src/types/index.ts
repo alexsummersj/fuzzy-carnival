@@ -286,6 +286,17 @@ export interface LLMProvider {
     riskScores: RiskScores,
     language: string
   ): Promise<string>;
+
+  extractPropertyData?(
+    text: string,
+    sourceType: 'pdf' | 'text'
+  ): Promise<Partial<PropertyData> | null>;
+}
+
+export interface ExtractedPropertyData {
+  data: Partial<PropertyData>;
+  confidence: number;
+  extractedFields: string[];
 }
 
 export interface LLMConfig {

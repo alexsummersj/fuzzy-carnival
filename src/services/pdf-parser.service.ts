@@ -6,6 +6,7 @@
 import pdf from 'pdf-parse';
 import type { PropertyData, PropertyType, PropertyStatus, PaymentPlan } from '@/types';
 import { extractNumber, normalizeString } from '@/lib/utils';
+import { tryAIExtraction } from './llm.service';
 
 export interface PDFParseResult {
   text: string;
@@ -178,6 +179,40 @@ export function extractPropertyDataFromPDF(
     extractedFields,
     missingFields,
   };
+}
+
+/**
+ * Extract property data with AI-powered extraction (with regex fallback)
+ */
+export async function extractPropertyDataFromPDFAsync(
+  pdfText: string,
+  filename?: string
+): Promise<ExtractedPropertyData> {
+  // Try AI extraction first
+  const aiResult = await tryAIExtraction(pdfText, 'pdf');
+
+  if (aiResult && Object.keys(aiResult).length > 3) {
+    // AI extraction successful, calculate confidence
+    const extractedFields = Object.keys(aiResult).filter(k => k !== 'sourceType' && k !== 'rawText');
+    const requiredFields = ['developer', 'city', 'price', 'areaSqFt', 'propertyType'];
+    const requiredExtracted = requiredFields.filter(f => extractedFields.includes(f));
+    const confidence = Math.min(95, Math.round((requiredExtracted.length / requiredFields.length) * 100) + 10);
+
+    console.log('Using AI extraction for PDF, confidence:', confidence);
+
+    return {
+      ...aiResult,
+      sourceType: 'pdf',
+      rawText: pdfText,
+      confidence,
+      extractedFields,
+      missingFields: requiredFields.filter(f => !extractedFields.includes(f)),
+    };
+  }
+
+  // Fallback to regex extraction
+  console.log('Falling back to regex extraction for PDF');
+  return extractPropertyDataFromPDF(pdfText, filename);
 }
 
 /**

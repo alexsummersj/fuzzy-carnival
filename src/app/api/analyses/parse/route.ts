@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { parsePropertyText } from '@/services/text-parser.service';
-import { parsePDF, extractPropertyDataFromPDF, mergePropertyData } from '@/services/pdf-parser.service';
+import { parsePropertyTextAsync } from '@/services/text-parser.service';
+import { parsePDF, extractPropertyDataFromPDFAsync, mergePropertyData } from '@/services/pdf-parser.service';
 
 /**
  * POST /api/analyses/parse
@@ -40,12 +40,12 @@ export async function POST(request: NextRequest) {
     const extractedDataList = [];
     const warnings: string[] = [];
 
-    // Parse PDFs
+    // Parse PDFs with AI extraction
     if (files.length > 0) {
       for (const file of files) {
         try {
           const parseResult = await parsePDF(file.buffer);
-          const extracted = extractPropertyDataFromPDF(parseResult.text, file.originalName);
+          const extracted = await extractPropertyDataFromPDFAsync(parseResult.text, file.originalName);
           extractedDataList.push(extracted);
         } catch (error) {
           warnings.push(`Failed to parse ${file.originalName}: ${(error as Error).message}`);
@@ -53,10 +53,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Parse text
+    // Parse text with AI extraction
     let textData = null;
     if (textInput) {
-      const parseResult = parsePropertyText(textInput);
+      const parseResult = await parsePropertyTextAsync(textInput);
       textData = parseResult;
       if (parseResult.warnings.length > 0) {
         warnings.push(...parseResult.warnings);

@@ -4,8 +4,8 @@
  */
 
 import { prisma } from '@/lib/db';
-import { parsePDF, extractPropertyDataFromPDF, mergePropertyData } from './pdf-parser.service';
-import { parsePropertyText, normalizePropertyData, mergePropertySources } from './text-parser.service';
+import { parsePDF, extractPropertyDataFromPDFAsync, mergePropertyData } from './pdf-parser.service';
+import { parsePropertyTextAsync, normalizePropertyData, mergePropertySources } from './text-parser.service';
 import { calculateRiskScores } from './risk-engine.service';
 import { getLLMProvider } from './llm.service';
 import { uploadFiles, downloadFile } from './storage.service';
@@ -160,9 +160,9 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
         const file = files[i];
         const uploaded = uploadedFiles[i];
 
-        // Parse PDF
+        // Parse PDF with AI extraction
         const parseResult = await parsePDF(file.buffer);
-        const extractedData = extractPropertyDataFromPDF(parseResult.text, file.originalName);
+        const extractedData = await extractPropertyDataFromPDFAsync(parseResult.text, file.originalName);
 
         // Store document record
         await prisma.document.create({
@@ -188,10 +188,10 @@ export async function createAnalysis(input: CreateAnalysisInput): Promise<Analys
       pdfPropertyData = mergePropertyData(extractedDataList);
     }
 
-    // Process text input if provided
+    // Process text input if provided with AI extraction
     let textPropertyData: Partial<PropertyData> | null = null;
     if (textInput) {
-      const parseResult = parsePropertyText(textInput);
+      const parseResult = await parsePropertyTextAsync(textInput);
       textPropertyData = parseResult.propertyData;
     }
 

@@ -77,6 +77,55 @@ class OpenAIProvider implements LLMProvider {
     const data = await response.json();
     return data.choices[0]?.message?.content || '';
   }
+
+  async extractPropertyData(
+    text: string,
+    sourceType: 'pdf' | 'text'
+  ): Promise<Partial<PropertyData> | null> {
+    if (!this.apiKey) {
+      return null;
+    }
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            {
+              role: 'system',
+              content: getExtractionSystemPrompt(),
+            },
+            {
+              role: 'user',
+              content: buildExtractionPrompt(text, sourceType),
+            },
+          ],
+          max_tokens: 2000,
+          temperature: 0.1,
+          response_format: { type: 'json_object' },
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('OpenAI extraction error:', await response.text());
+        return null;
+      }
+
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content;
+
+      const parsed = JSON.parse(content);
+      return normalizeExtractedData(parsed, sourceType);
+    } catch (error) {
+      console.error('OpenAI extraction failed:', error);
+      return null;
+    }
+  }
 }
 
 /**
@@ -130,6 +179,57 @@ class AnthropicProvider implements LLMProvider {
     const data = await response.json();
     return data.content[0]?.text || '';
   }
+
+  async extractPropertyData(
+    text: string,
+    sourceType: 'pdf' | 'text'
+  ): Promise<Partial<PropertyData> | null> {
+    if (!this.apiKey) {
+      return null;
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 2000,
+          system: getExtractionSystemPrompt(),
+          messages: [
+            {
+              role: 'user',
+              content: buildExtractionPrompt(text, sourceType),
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Anthropic extraction error:', await response.text());
+        return null;
+      }
+
+      const data = await response.json();
+      const content = data.content[0]?.text || '';
+
+      // Extract JSON from response (Anthropic doesn't have response_format)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return null;
+      }
+
+      const parsed = JSON.parse(jsonMatch[0]);
+      return normalizeExtractedData(parsed, sourceType);
+    } catch (error) {
+      console.error('Anthropic extraction failed:', error);
+      return null;
+    }
+  }
 }
 
 /**
@@ -145,6 +245,11 @@ class MockLLMProvider implements LLMProvider {
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     return generateTemplateReport(propertyData, riskScores, language);
+  }
+
+  async extractPropertyData(): Promise<Partial<PropertyData> | null> {
+    // Mock provider doesn't support AI extraction, fallback to regex
+    return null;
   }
 }
 
@@ -488,6 +593,164 @@ function getReportTemplates(language: string): ReportTemplates {
   };
 
   return templates[language] || templates.en;
+}
+
+/**
+ * Get system prompt for property data extraction
+ */
+function getExtractionSystemPrompt(): string {
+  return `You are a real estate data extraction specialist. Your task is to extract structured property information from text documents (broker messages, PDF brochures, property listings).
+
+Extract the following fields when available:
+- name: Project or property name
+- developer: Developer/builder company name
+- country, city, area, neighborhood: Location details
+- propertyType: apartment, villa, townhouse, penthouse, studio, duplex, etc.
+- bedrooms, bathrooms: Number of rooms
+- areaSqFt, areaSqM: Property size
+- floor, totalFloors: Floor information
+- price, currency: Price and currency (AED, USD, EUR, etc.)
+- status: ready, off_plan, under_construction, pre_launch, resale
+- handoverDate: Expected completion/handover date
+- paymentPlan: Payment structure (downPayment %, duringConstruction %, onHandover %, postHandover %)
+- amenities: List of amenities/features
+
+Always respond with a valid JSON object. Only include fields that you can confidently extract from the text.
+For prices, extract just the number without currency symbols.
+For dates, use ISO format or "Q1 2025" format.
+For property types, normalize to: apartment, villa, townhouse, penthouse, studio, duplex, loft, land, commercial, office, retail, warehouse, other.`;
+}
+
+/**
+ * Build extraction prompt
+ */
+function buildExtractionPrompt(text: string, sourceType: 'pdf' | 'text'): string {
+  const sourceDescription = sourceType === 'pdf' ? 'PDF brochure/document' : 'broker message/listing text';
+
+  return `Extract property data from the following ${sourceDescription}. Return a JSON object with the extracted fields.
+
+TEXT TO ANALYZE:
+${text.slice(0, 8000)}
+
+Return a JSON object with only the fields you can confidently extract.`;
+}
+
+/**
+ * Normalize extracted data to match PropertyData interface
+ */
+function normalizeExtractedData(
+  data: Record<string, unknown>,
+  sourceType: 'pdf' | 'text'
+): Partial<PropertyData> {
+  const result: Partial<PropertyData> = {
+    sourceType,
+  };
+
+  // Map string fields
+  const stringFields = ['name', 'developer', 'country', 'city', 'area', 'neighborhood', 'view', 'currency', 'handoverDate', 'description', 'projectName', 'unitNumber'];
+  for (const field of stringFields) {
+    if (data[field] && typeof data[field] === 'string') {
+      (result as any)[field] = data[field];
+    }
+  }
+
+  // Map number fields
+  const numberFields = ['bedrooms', 'bathrooms', 'areaSqFt', 'areaSqM', 'floor', 'totalFloors', 'price', 'pricePerSqFt', 'pricePerSqM', 'constructionProgress', 'parkingSpaces'];
+  for (const field of numberFields) {
+    if (data[field] !== undefined) {
+      const num = Number(data[field]);
+      if (!isNaN(num)) {
+        (result as any)[field] = num;
+      }
+    }
+  }
+
+  // Normalize property type
+  if (data.propertyType) {
+    const typeMap: Record<string, string> = {
+      'apartment': 'apartment',
+      'flat': 'apartment',
+      'apt': 'apartment',
+      'villa': 'villa',
+      'townhouse': 'townhouse',
+      'town house': 'townhouse',
+      'penthouse': 'penthouse',
+      'studio': 'studio',
+      'duplex': 'duplex',
+      'loft': 'loft',
+      'land': 'land',
+      'plot': 'land',
+      'commercial': 'commercial',
+      'office': 'office',
+      'retail': 'retail',
+      'shop': 'retail',
+      'warehouse': 'warehouse',
+    };
+    const normalized = typeMap[String(data.propertyType).toLowerCase()] || 'other';
+    result.propertyType = normalized as any;
+  }
+
+  // Normalize status
+  if (data.status) {
+    const statusMap: Record<string, string> = {
+      'ready': 'ready',
+      'completed': 'ready',
+      'move-in ready': 'ready',
+      'off-plan': 'off_plan',
+      'off plan': 'off_plan',
+      'offplan': 'off_plan',
+      'under construction': 'under_construction',
+      'construction': 'under_construction',
+      'pre-launch': 'pre_launch',
+      'pre launch': 'pre_launch',
+      'resale': 'resale',
+      'secondary': 'resale',
+    };
+    const normalized = statusMap[String(data.status).toLowerCase()] || 'off_plan';
+    result.status = normalized as any;
+  }
+
+  // Handle payment plan
+  if (data.paymentPlan && typeof data.paymentPlan === 'object') {
+    const pp = data.paymentPlan as Record<string, unknown>;
+    result.paymentPlan = {
+      downPayment: pp.downPayment ? Number(pp.downPayment) : undefined,
+      duringConstruction: pp.duringConstruction ? Number(pp.duringConstruction) : undefined,
+      onHandover: pp.onHandover ? Number(pp.onHandover) : undefined,
+      postHandover: pp.postHandover ? Number(pp.postHandover) : undefined,
+    };
+  }
+
+  // Handle amenities
+  if (Array.isArray(data.amenities)) {
+    result.amenities = data.amenities.map(String);
+  }
+
+  return result;
+}
+
+/**
+ * Try AI extraction, returns null if not available or fails
+ */
+export async function tryAIExtraction(
+  text: string,
+  sourceType: 'pdf' | 'text'
+): Promise<Partial<PropertyData> | null> {
+  const provider = getLLMProvider();
+
+  if (provider.extractPropertyData) {
+    try {
+      const result = await provider.extractPropertyData(text, sourceType);
+      if (result && Object.keys(result).length > 1) {
+        console.log('AI extraction successful, fields:', Object.keys(result));
+        return result;
+      }
+    } catch (error) {
+      console.error('AI extraction failed:', error);
+    }
+  }
+
+  return null;
 }
 
 export { generateTemplateReport, buildPropertySummary, buildRiskSummary };
