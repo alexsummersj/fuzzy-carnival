@@ -7,6 +7,9 @@ import prisma from '@/lib/prisma';
  * Temporary endpoint to upgrade current user to Enterprise plan
  * DELETE THIS FILE AFTER USE
  */
+// CHANGE THIS TO YOUR EMAIL
+const ADMIN_EMAIL = 'your-email@example.com';
+
 export async function POST(request: NextRequest) {
   try {
     const session = await auth();
@@ -14,6 +17,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
+      );
+    }
+
+    // Only allow specific admin email
+    if (session.user.email !== ADMIN_EMAIL) {
+      return NextResponse.json(
+        { error: 'Forbidden - admin only' },
+        { status: 403 }
       );
     }
 
